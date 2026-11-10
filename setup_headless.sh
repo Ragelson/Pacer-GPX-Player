@@ -39,8 +39,10 @@ install() {
 }
 
 start() {
+  # stdin/stdout отвязаны от родителя, иначе вызов из веб-сервера (subprocess с pipe) зависнет
+  adb start-server >/dev/null 2>&1 </dev/null || true
   nohup emulator -avd "$AVD_NAME" -no-window -no-audio -no-boot-anim \
-    -gpu swiftshader_indirect -no-snapshot-save >"$SDK/emulator.log" 2>&1 &
+    -gpu swiftshader_indirect -no-snapshot-save >"$SDK/emulator.log" 2>&1 </dev/null &
   echo "[+] Эмулятор стартует (лог: $SDK/emulator.log), жду загрузки..."
   adb wait-for-device
   until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do sleep 3; done

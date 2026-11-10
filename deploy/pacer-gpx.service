@@ -1,0 +1,20 @@
+[Unit]
+Description=Pacer GPX Player (web UI)
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+User=pacer
+Environment=HOME=/var/lib/pacer
+WorkingDirectory=/opt/pacer-gpx
+ExecStart=/usr/bin/python3 /opt/pacer-gpx/web_server.py --bind @BIND_IP@ --port @PORT@
+Restart=on-failure
+RestartSec=3
+# при перезапуске сервиса эмулятор (дочерний процесс) не убиваем
+KillMode=process
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

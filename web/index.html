@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pacer GPX Player</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2230;--muted:#6b7385;--line:#dde1e8;--acc:#2563eb;--ok:#15803d;--bad:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b202b;--fg:#e6e9f0;--muted:#8d95a8;--line:#2c3342;--acc:#5b8cff;--ok:#4ade80;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 14px}
+h2{font-size:14px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:2px}
+input,select,button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+input[type=text],input[type=password],input[type=number],select{width:100%}
+button{cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.danger{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:6px}
+.dot.on{background:var(--ok)}
+.muted{color:var(--muted)}
+.bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden;margin:8px 0}
+.bar>div{height:100%;width:0;background:var(--acc);transition:width .3s}
+canvas{width:100%;height:260px;background:var(--bg);border:1px solid var(--line);border-radius:8px;display:block}
+pre{margin:0;max-height:260px;overflow:auto;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap}
+.err{color:var(--bad);min-height:1.2em;margin-top:6px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px 12px;margin-top:8px}
+.kv b{display:block;font-size:16px}
+</style>
+</head>
+<body>
+<main>
+<h1>Pacer GPX Player</h1>
+
+<div class="card" id="loginCard">
+  <h2>Доступ</h2>
+  <div class="row"><input type="password" id="token" placeholder="Токен доступа" style="flex:1;min-width:200px">
+  <button class="primary" id="login">Войти</button></div>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" hidden>
+<div class="card">
+  <h2>Эмулятор</h2>
+  <div class="row">
+    <span><span class="dot" id="emuDot"></span><span id="emuText">…</span></span>
+    <button id="emuStart">Запустить</button>
+    <button id="emuStop" class="danger">Остановить</button>
+  </div>
+  <div class="muted" style="margin-top:6px">Первый запуск эмулятора занимает 1–3 минуты.</div>
+</div>
+
+<div class="card">
+  <h2>Трек</h2>
+  <div class="row">
+    <select id="track" style="flex:1;min-width:180px"></select>
+    <button class="danger" id="delTrack">Удалить</button>
+    <label class="row" style="margin:0"><input type="file" id="file" accept=".gpx"></label>
+  </div>
+  <div class="err" id="trackErr"></div>
+</div>
+
+<div class="card">
+  <h2>Параметры</h2>
+  <div class="grid">
+    <div><label>Скорость ходьбы, км/ч</label><input type="number" step="0.1" id="walk_kmh"></div>
+    <div><label>Множитель скорости</label><input type="number" step="0.1" id="speed"></div>
+    <div><label>Частота шагов, Гц</label><input type="number" step="0.1" id="cadence"></div>
+    <div><label>Шаг, сек</label><input type="number" step="0.5" id="step"></div>
+    <div><label>Вероятность остановки</label><input type="number" step="0.05" min="0" max="1" id="stop_prob"></div>
+    <div><label>Шум GPS, м</label><input type="number" step="0.5" id="gps_noise"></div>
+    <div><label>Seed (пусто = случайный)</label><input type="number" id="seed"></div>
+    <div><label>&nbsp;</label><label style="color:var(--fg);font-size:15px"><input type="checkbox" id="human"> Humanize</label></div>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button id="preview">Предпросмотр</button>
+    <button class="primary" id="start">▶ Старт</button>
+    <button class="danger" id="stop">■ Стоп</button>
+  </div>
+  <div class="err" id="runErr"></div>
+</div>
+
+<div class="card">
+  <h2>Маршрут</h2>
+  <canvas id="map" width="800" height="260"></canvas>
+  <div class="kv" id="summary"></div>
+</div>
+
+<div class="card">
+  <h2>Ход проигрыша</h2>
+  <div><b id="state">—</b> <span class="muted" id="prog"></span></div>
+  <div class="bar"><div id="barfill"></div></div>
+  <pre id="log"></pre>
+</div>
+</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const PN = ['walk_kmh','speed','cadence','step','stop_prob','gps_noise','seed'];
+let TOKEN = localStorage.getItem('pacerToken') || '', logFrom = 0, route = [], here = null, timer = null;
+
+async function api(method, path, body, raw) {
+  const r = await fetch(path, {method, headers: {'X-Token': TOKEN, ...(raw ? {} : {'Content-Type':'application/json'})},
+    body: raw ? body : (body ? JSON.stringify(body) : undefined)});
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { showLogin('Неверный токен'); throw new Error('auth'); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function showLogin(msg){ $('loginCard').hidden=false; $('app').hidden=true; $('loginErr').textContent=msg||''; clearInterval(timer); }
+function params(){
+  const p = {human: $('human').checked};
+  for (const k of PN) p[k] = $(k).value === '' ? null : $(k).value;
+  return p;
+}
+async function loadTracks(sel){
+  const j = await api('GET','/api/tracks');
+  const cur = sel || $('track').value;
+  $('track').innerHTML = '';
+  for (const t of j.tracks) { const o = document.createElement('option'); o.textContent = t; $('track').append(o); }
+  if (j.tracks.includes(cur)) $('track').value = cur;
+  if (!$('walk_kmh').value) for (const k of PN) if (j.defaults[k] != null) $(k).value = j.defaults[k];
+}
+async function enter(){
+  $('loginCard').hidden = true; $('app').hidden = false;
+  await loadTracks(); poll(); timer = setInterval(poll, 1000);
+}
+$('login').onclick = async () => {
+  TOKEN = $('token').value.trim();
+  try { await api('GET','/api/tracks'); localStorage.setItem('pacerToken', TOKEN); await enter(); }
+  catch(e){ if (e.message !== 'auth') $('loginErr').textContent = e.message; }
+};
+$('token').onkeydown = e => { if (e.key === 'Enter') $('login').click(); };
+
+$('file').onchange = async () => {
+  const f = $('file').files[0]; if (!f) return; $('trackErr').textContent = '';
+  try {
+    const name = f.name.replace(/[^A-Za-z0-9._-]/g,'_');
+    await api('POST','/api/upload?name='+encodeURIComponent(name), await f.arrayBuffer(), true);
+    await loadTracks(name);
+  } catch(e){ $('trackErr').textContent = e.message; }
+  $('file').value = '';
+};
+$('delTrack').onclick = async () => {
+  const n = $('track').value; if (!n || !confirm('Удалить '+n+'?')) return;
+  try { await api('DELETE','/api/tracks?name='+encodeURIComponent(n)); await loadTracks(); } catch(e){ $('trackErr').textContent = e.message; }
+};
+$('emuStart').onclick = () => api('POST','/api/emulator',{action:'start'}).catch(e => $('runErr').textContent = e.message);
+$('emuStop').onclick = () => api('POST','/api/emulator',{action:'stop'}).catch(e => $('runErr').textContent = e.message);
+
+function fmtMin(s){ return (s/60).toFixed(1)+' мин'; }
+function showSummary(sm){
+  const items = [['Дистанция',(sm.distance_m/1000).toFixed(2)+' км'],['Длительность',fmtMin(sm.duration_s)],
+    ['Проигрыш',fmtMin(sm.play_s)],['Ср. скорость',sm.avg_kmh.toFixed(1)+' км/ч'],
+    ['Перепад высот',(sm.ele_max-sm.ele_min).toFixed(1)+' м'],['Остановок',sm.stops+' ('+Math.round(sm.stops_wait_s)+' с)']];
+  $('summary').innerHTML = '';
+  for (const [k,v] of items){ const d=document.createElement('div'); const s=document.createElement('span'); s.className='muted'; s.textContent=k;
+    const b=document.createElement('b'); b.textContent=v; d.append(s,b); $('summary').append(d); }
+}
+$('preview').onclick = async () => {
+  $('runErr').textContent = '';
+  try {
+    const j = await api('POST','/api/preview',{file:$('track').value, params:params()});
+    route = j.route; here = null; draw(); showSummary(j.summary);
+  } catch(e){ $('runErr').textContent = e.message; }
+};
+$('start').onclick = async () => {
+  $('runErr').textContent = ''; logFrom = 0; $('log').textContent = '';
+  try { await api('POST','/api/start',{file:$('track').value, params:params()}); if (!route.length) $('preview').click(); }
+  catch(e){ $('runErr').textContent = e.message; }
+};
+$('stop').onclick = () => api('POST','/api/stop',{}).catch(e => $('runErr').textContent = e.message);
+
+function draw(){
+  const c = $('map'), ctx = c.getContext('2d'), W = c.width, H = c.height;
+  ctx.clearRect(0,0,W,H); if (route.length < 2) return;
+  const lats = route.map(p=>p[0]), lons = route.map(p=>p[1]);
+  const la0=Math.min(...lats), la1=Math.max(...lats), lo0=Math.min(...lons), lo1=Math.max(...lons);
+  const kx = Math.cos((la0+la1)/2*Math.PI/180), pad = 16;
+  const sx = (W-2*pad)/Math.max((lo1-lo0)*kx,1e-9), sy = (H-2*pad)/Math.max(la1-la0,1e-9), s = Math.min(sx,sy);
+  const X = lon => pad + (lon-lo0)*kx*s, Y = lat => H - pad - (lat-la0)*s;
+  const css = getComputedStyle(document.documentElement);
+  ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.strokeStyle = css.getPropertyValue('--acc'); ctx.beginPath();
+  route.forEach((p,i)=> i ? ctx.lineTo(X(p[1]),Y(p[0])) : ctx.moveTo(X(p[1]),Y(p[0]))); ctx.stroke();
+  ctx.fillStyle = css.getPropertyValue('--ok'); ctx.beginPath(); ctx.arc(X(route[0][1]),Y(route[0][0]),5,0,7); ctx.fill();
+  ctx.fillStyle = css.getPropertyValue('--bad'); const e = route[route.length-1]; ctx.beginPath(); ctx.arc(X(e[1]),Y(e[0]),5,0,7); ctx.fill();
+  if (here){ ctx.fillStyle = css.getPropertyValue('--fg'); ctx.beginPath(); ctx.arc(X(here[1]),Y(here[0]),6,0,7); ctx.fill(); }
+}
+const NAMES = {idle:'Ожидание', running:'Идёт проигрыш', done:'Готово', stopped:'Остановлено', error:'Ошибка'};
+async function poll(){
+  try {
+    const j = await api('GET','/api/status?log_from='+logFrom), st = j.status;
+    $('state').textContent = NAMES[st.state] || st.state;
+    const run = st.state === 'running';
+    $('start').disabled = run; $('stop').disabled = !run;
+    $('prog').textContent = st.n ? `${st.i} / ${st.n} · ${st.ele!=null ? st.ele.toFixed(1)+' м' : ''}` : '';
+    $('barfill').style.width = st.n ? (100*st.i/st.n)+'%' : '0';
+    if (st.lat != null && run){ here = [st.lat, st.lon]; draw(); }
+    $('emuDot').className = 'dot' + (j.emulator.up ? ' on' : '');
+    $('emuText').textContent = j.emulator.busy ? 'выполняется…' : (j.emulator.up ? 'работает (порт '+j.emulator.port+')' : 'не запущен');
+    $('emuStart').disabled = j.emulator.busy || j.emulator.up; $('emuStop').disabled = j.emulator.busy || !j.emulator.up;
+    if (j.log_total < logFrom) { logFrom = 0; $('log').textContent = ''; }
+    else if (j.log.length){ const l = $('log'); const atEnd = l.scrollTop + l.clientHeight >= l.scrollHeight - 5;
+      l.textContent += (l.textContent ? '\n' : '') + j.log.join('\n'); logFrom = j.log_total; if (atEnd) l.scrollTop = l.scrollHeight; }
+  } catch(e){}
+}
+if (TOKEN) api('GET','/api/tracks').then(enter).catch(()=>showLogin());
+</script>
+</body>
+</html>

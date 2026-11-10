@@ -204,53 +204,72 @@ def sensor_loop(console, stop_event, cadence_hz=CADENCE_HZ, moving=None):
 
 # ---------- Основной цикл ----------
 
-def play(gpx_path, host=EMULATOR_HOST, port=EMULATOR_PORT, token=None,
-         speed=SPEED_MULTIPLIER, cadence=CADENCE_HZ, step=INTERP_STEP_SEC,
-         walk_kmh=WALK_SPEED_KMH, dry_run=False, human=False, seed=None,
-         stop_prob=0.5, gps_noise=2.5):
+def prepare(gpx_path, step=INTERP_STEP_SEC, walk_kmh=WALK_SPEED_KMH, speed=SPEED_MULTIPLIER,
+            human=False, seed=None, stop_prob=0.5, gps_noise=2.5):
+    """Разбирает GPX и строит точки проигрыша. Возвращает (points, stops, summary)."""
     raw_points = parse_gpx(gpx_path, walk_kmh)
     if not raw_points:
-        print("[!] В файле нет точек.")
-        return
-
+        raise ValueError("В файле нет точек.")
     stops = []
     if human:
         points, stops = humanize(raw_points, seed=seed, mean_kmh=walk_kmh,
                                  stop_prob=stop_prob, gps_noise_m=gps_noise, step=step)
-        print(f"[+] Humanize: остановок {len(stops)}, "
-              f"ожидание суммарно {sum(b - a for a, b in stops):.0f} с.")
     else:
         points = interpolate(raw_points, step)
     total = points[-1][3]
-    elevations = [p[2] for p in raw_points]
-    print(f"[+] Исходно в GPX: {len(raw_points)} точек.")
-    print(f"[+] После интерполяции: {len(points)} точек.")
-    print(f"[+] Высоты: {min(elevations):.1f} – {max(elevations):.1f} м, "
-          f"перепад {max(elevations) - min(elevations):.1f} м.")
-    print(f"[+] Длительность: {total/60:.1f} мин "
-          f"(проигрыш ~{total/speed/60:.1f} мин)")
-
+    ele = [p[2] for p in raw_points]
     dist = sum(haversine_m(p[0], p[1], q[0], q[1]) for p, q in zip(raw_points, raw_points[1:]))
-    print(f"[+] Дистанция: {dist/1000:.2f} км, ~{dist/total*3.6:.1f} км/ч." if total else "")
+    summary = {
+        "raw_points": len(raw_points), "points": len(points),
+        "ele_min": min(ele), "ele_max": max(ele),
+        "duration_s": total, "play_s": total / speed,
+        "distance_m": dist, "avg_kmh": (dist / total * 3.6) if total else 0.0,
+        "stops": len(stops), "stops_wait_s": sum(b - a for a, b in stops),
+    }
+    return points, stops, summary
+
+
+def format_summary(sm):
+    return [
+        f"[+] Исходно в GPX: {sm['raw_points']} точек, после обработки: {sm['points']}.",
+        f"[+] Высоты: {sm['ele_min']:.1f} – {sm['ele_max']:.1f} м, "
+        f"перепад {sm['ele_max'] - sm['ele_min']:.1f} м.",
+        f"[+] Длительность: {sm['duration_s']/60:.1f} мин (проигрыш ~{sm['play_s']/60:.1f} мин)",
+        f"[+] Дистанция: {sm['distance_m']/1000:.2f} км, ~{sm['avg_kmh']:.1f} км/ч.",
+        f"[+] Остановок: {sm['stops']}, ожидание суммарно {sm['stops_wait_s']:.0f} с.",
+    ]
+
+
+def play(gpx_path, host=EMULATOR_HOST, port=EMULATOR_PORT, token=None,
+         speed=SPEED_MULTIPLIER, cadence=CADENCE_HZ, step=INTERP_STEP_SEC,
+         walk_kmh=WALK_SPEED_KMH, dry_run=False, human=False, seed=None,
+         stop_prob=0.5, gps_noise=2.5, cancel=None, on_progress=None, log=print):
+    """cancel — threading.Event для досрочной остановки;
+    on_progress(i, n, lat, lon, ele, t_offset) вызывается на каждой точке."""
+    try:
+        points, stops, sm = prepare(gpx_path, step, walk_kmh, speed, human, seed,
+                                    stop_prob, gps_noise)
+    except ValueError as e:
+        log(f"[!] {e}")
+        return False
+    for line in format_summary(sm):
+        log(line)
     if dry_run:
-        print("[+] --dry-run: эмулятор не используется, ничего не отправлено.")
-        return
+        log("[+] dry-run: эмулятор не используется, ничего не отправлено.")
+        return True
 
     token = load_token(token)
     geo = EmulatorConsole(host, port, token)
     sens = EmulatorConsole(host, port, token)
-    print("[+] Подключено к эмулятору.")
+    log("[+] Подключено к эмулятору.")
 
-    # Проверим, поддерживает ли эмулятор pressure-сенсор
     pressure_supported = True
     test_resp = sens.command("sensor set pressure 1013.25")
     if "KO" in test_resp or "not available" in test_resp.lower():
         pressure_supported = False
-        print("[!] Pressure-сенсор недоступен в этом эмуляторе.")
-        print("[!] Высоты в Pacer не появятся. Проверь AVD config "
-              "(hw.sensors.pressure=yes).")
+        log("[!] Pressure-сенсор недоступен (проверь hw.sensors.pressure=yes в AVD).")
     else:
-        print("[+] Pressure-сенсор доступен, барометр будет симулироваться.")
+        log("[+] Pressure-сенсор доступен, барометр будет симулироваться.")
 
     stop_event = threading.Event()
     moving = threading.Event()
@@ -259,9 +278,13 @@ def play(gpx_path, host=EMULATOR_HOST, port=EMULATOR_PORT, token=None,
     t = threading.Thread(target=sensor_loop, args=(sens, stop_event, cadence, moving), daemon=True)
     t.start()
 
+    completed = False
     try:
         start_real = time.time()
         for i, (lat, lon, ele, t_offset) in enumerate(points):
+            if cancel is not None and cancel.is_set():
+                log("[!] Остановлено пользователем.")
+                break
             k = bisect_right(stop_starts, t_offset) - 1
             if k >= 0 and stops[k][0] < t_offset <= stops[k][1]:
                 moving.clear()
@@ -269,25 +292,30 @@ def play(gpx_path, host=EMULATOR_HOST, port=EMULATOR_PORT, token=None,
                 moving.set()
             geo.command(f"geo fix {lon} {lat} {ele}")
             if pressure_supported:
-                pressure = elevation_to_pressure_hpa(ele)
-                geo.command(f"sensor set pressure {pressure:.2f}")
-
+                geo.command(f"sensor set pressure {elevation_to_pressure_hpa(ele):.2f}")
+            if on_progress:
+                on_progress(i + 1, len(points), lat, lon, ele, t_offset)
             if i % 20 == 0 or i == len(points) - 1:
-                print(f"[{i+1}/{len(points)}] {lat:.6f}, {lon:.6f}  "
-                      f"ele={ele:.1f}м  t+{t_offset:.0f}s")
-
+                log(f"[{i+1}/{len(points)}] {lat:.6f}, {lon:.6f}  "
+                    f"ele={ele:.1f}м  t+{t_offset:.0f}s")
             if i < len(points) - 1:
-                target_real = start_real + points[i + 1][3] / speed
-                delta = target_real - time.time()
+                delta = start_real + points[i + 1][3] / speed - time.time()
                 if delta > 0:
-                    time.sleep(delta)
-        print("[+] Трек проигран.")
+                    # ждём с возможностью прервать
+                    if cancel is not None:
+                        cancel.wait(delta)
+                    else:
+                        time.sleep(delta)
+        else:
+            completed = True
+            log("[+] Трек проигран.")
     finally:
         stop_event.set()
         t.join(timeout=2)
         geo.close()
         sens.close()
-        print("[+] Соединения закрыты.")
+        log("[+] Соединения закрыты.")
+    return completed
 
 
 def main(argv=None):
