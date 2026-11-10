@@ -64,3 +64,44 @@ class Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HumanizeTests(unittest.TestCase):
+    @staticmethod
+    def l_route():
+        # 300 м на север, затем 300 м на восток, точка каждые ~10 м
+        lat0, lon0 = 54.7757, 56.0366
+        dlat = 10 / 111195
+        dlon = 10 / (111195 * __import__("math").cos(__import__("math").radians(lat0)))
+        pts = [(lat0 + i * dlat, lon0, 100.0, None) for i in range(31)]
+        top = pts[-1][0]
+        pts += [(top, lon0 + i * dlon, 100.0, None) for i in range(1, 31)]
+        return pts
+
+    def test_deterministic_and_monotonic(self):
+        a, sa = g.humanize(self.l_route(), seed=1)
+        b, sb = g.humanize(self.l_route(), seed=1)
+        self.assertEqual(a, b)
+        self.assertEqual(sa, sb)
+        self.assertTrue(all(x[3] < y[3] for x, y in zip(a, a[1:])))
+
+    def test_stop_at_turn_makes_walk_longer(self):
+        route = self.l_route()
+        with_stop, stops = g.humanize(route, seed=3, stop_prob=1.0, random_stop_per_km=0)
+        without, none = g.humanize(route, seed=3, stop_prob=0.0, random_stop_per_km=0)
+        self.assertEqual(len(stops), 1)
+        self.assertEqual(none, [])
+        self.assertGreater(with_stop[-1][3], without[-1][3] + 4)
+
+    def test_ends_near_route_end_and_noise_bounded(self):
+        route = self.l_route()
+        pts, _ = g.humanize(route, seed=5, gps_noise_m=2.5)
+        end = g.haversine_m(pts[-1][0], pts[-1][1], route[-1][0], route[-1][1])
+        self.assertLess(end, 15)
+        self.assertGreater(len(pts), 100)
+
+    def test_no_noise_stays_on_route(self):
+        route = self.l_route()
+        pts, _ = g.humanize(route, seed=5, gps_noise_m=0.0)
+        self.assertAlmostEqual(pts[-1][0], route[-1][0], places=5)
+        self.assertAlmostEqual(pts[-1][1], route[-1][1], places=5)

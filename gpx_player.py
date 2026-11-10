@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
+from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 
 # === НАСТРОЙКИ (значения по умолчанию; всё можно переопределить через CLI) ===
@@ -44,6 +45,9 @@ def load_token(explicit=None):
         raise SystemExit(
             f"[!] Токен не найден. Запусти эмулятор (он создаст {path}) "
             "или передай --token / EMULATOR_AUTH_TOKEN.")
+
+
+from humanize import humanize  # noqa: E402
 
 
 # ---------- Подключение к эмулятору ----------
@@ -166,10 +170,22 @@ def interpolate(points, step_sec):
 
 # ---------- Акселерометр+гироскоп: ритмичная ходьба ----------
 
-def sensor_loop(console, stop_event, cadence_hz=CADENCE_HZ):
+def sensor_loop(console, stop_event, cadence_hz=CADENCE_HZ, moving=None):
     start = time.monotonic()
     while not stop_event.is_set():
         t = time.monotonic() - start    # фаза по реальному времени, не дрейфует
+        if moving is not None and not moving.is_set():
+            # стоим на месте: только гравитация и лёгкий шум, без шагов
+            try:
+                console.command(f"sensor set acceleration {random.uniform(-0.05, 0.05):.3f}:"
+                                f"{random.uniform(-0.05, 0.05):.3f}:{9.8 + random.uniform(-0.05, 0.05):.3f}")
+                console.command(f"sensor set gyroscope {random.uniform(-0.02, 0.02):.3f}:"
+                                f"{random.uniform(-0.02, 0.02):.3f}:{random.uniform(-0.02, 0.02):.3f}")
+            except Exception as e:
+                print(f"[!] Сенсоры: {e}")
+                break
+            stop_event.wait(SENSOR_INTERVAL)
+            continue
         phase = 2 * math.pi * cadence_hz * t
         az = 9.8 + 3.0 * math.sin(phase) + random.uniform(-0.3, 0.3)
         ax = 1.5 * math.sin(phase / 2) + random.uniform(-0.2, 0.2)
@@ -190,13 +206,21 @@ def sensor_loop(console, stop_event, cadence_hz=CADENCE_HZ):
 
 def play(gpx_path, host=EMULATOR_HOST, port=EMULATOR_PORT, token=None,
          speed=SPEED_MULTIPLIER, cadence=CADENCE_HZ, step=INTERP_STEP_SEC,
-         walk_kmh=WALK_SPEED_KMH, dry_run=False):
+         walk_kmh=WALK_SPEED_KMH, dry_run=False, human=False, seed=None,
+         stop_prob=0.5, gps_noise=2.5):
     raw_points = parse_gpx(gpx_path, walk_kmh)
     if not raw_points:
         print("[!] В файле нет точек.")
         return
 
-    points = interpolate(raw_points, step)
+    stops = []
+    if human:
+        points, stops = humanize(raw_points, seed=seed, mean_kmh=walk_kmh,
+                                 stop_prob=stop_prob, gps_noise_m=gps_noise, step=step)
+        print(f"[+] Humanize: остановок {len(stops)}, "
+              f"ожидание суммарно {sum(b - a for a, b in stops):.0f} с.")
+    else:
+        points = interpolate(raw_points, step)
     total = points[-1][3]
     elevations = [p[2] for p in raw_points]
     print(f"[+] Исходно в GPX: {len(raw_points)} точек.")
@@ -229,12 +253,20 @@ def play(gpx_path, host=EMULATOR_HOST, port=EMULATOR_PORT, token=None,
         print("[+] Pressure-сенсор доступен, барометр будет симулироваться.")
 
     stop_event = threading.Event()
-    t = threading.Thread(target=sensor_loop, args=(sens, stop_event, cadence), daemon=True)
+    moving = threading.Event()
+    moving.set()
+    stop_starts = [a for a, _ in stops]
+    t = threading.Thread(target=sensor_loop, args=(sens, stop_event, cadence, moving), daemon=True)
     t.start()
 
     try:
         start_real = time.time()
         for i, (lat, lon, ele, t_offset) in enumerate(points):
+            k = bisect_right(stop_starts, t_offset) - 1
+            if k >= 0 and stops[k][0] < t_offset <= stops[k][1]:
+                moving.clear()
+            else:
+                moving.set()
             geo.command(f"geo fix {lon} {lat} {ele}")
             if pressure_supported:
                 pressure = elevation_to_pressure_hpa(ele)
@@ -269,9 +301,16 @@ def main(argv=None):
     p.add_argument("--step", type=float, default=INTERP_STEP_SEC, help="шаг интерполяции, сек")
     p.add_argument("--walk-kmh", type=float, default=WALK_SPEED_KMH,
                    help="скорость, если в GPX нет времени")
+    p.add_argument("--humanize", action="store_true",
+                   help="заново пройти маршрут по геометрии: остановки, шум скорости и GPS")
+    p.add_argument("--seed", type=int, help="seed для воспроизводимости --humanize")
+    p.add_argument("--stop-prob", type=float, default=0.5,
+                   help="вероятность остановки на повороте/перекрёстке (0..1)")
+    p.add_argument("--gps-noise", type=float, default=2.5, help="шум GPS, м")
     p.add_argument("--dry-run", action="store_true", help="только разобрать трек, без эмулятора")
     a = p.parse_args(argv)
-    play(a.gpx, a.host, a.port, a.token, a.speed, a.cadence, a.step, a.walk_kmh, a.dry_run)
+    play(a.gpx, a.host, a.port, a.token, a.speed, a.cadence, a.step, a.walk_kmh, a.dry_run,
+         a.humanize, a.seed, a.stop_prob, a.gps_noise)
 
 
 if __name__ == "__main__":
