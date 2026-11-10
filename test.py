@@ -1,7 +1,9 @@
 import socket
 
+from gpx_player import load_token
+
 PORT = 5554
-TOKEN = "подставь сюда токен"
+TOKEN = load_token()
 
 def read_until_ok(sock, timeout=5):
     sock.settimeout(timeout)

@@ -26,6 +26,8 @@
 |------|----------|
 | `gpx_player.py` | Основной скрипт: парсит GPX, интерполирует точки, шлёт координаты и симулирует сенсоры |
 | `test.py` | Минимальная проверка связи с консолью эмулятора |
+| `setup_headless.sh` | Установка и запуск эмулятора без Android Studio (только консольный SDK) |
+| `tests/` | Юнит-тесты парсера, интерполяции и барометра (`python -m unittest discover -s tests`) |
 
 ## Настройка
 
@@ -41,12 +43,7 @@
    cat ~/.emulator_console_auth_token
    ```
 
-3. Открой `gpx_player.py` и `test.py`, пропиши значения:
-
-   ```python
-   EMULATOR_PORT = 5554
-   AUTH_TOKEN = "сюда_токен"
-   ```
+3. Токен подхватывается автоматически из `~/.emulator_console_auth_token`. При необходимости его можно передать явно (`--token` или переменная `EMULATOR_AUTH_TOKEN`), порт — через `--port`.
 
 4. На эмуляторе установи фитнес-приложение через Play Store, войди в аккаунт.
 
@@ -62,6 +59,25 @@ python test.py
 ```
 
 Ожидаемый вывод — три блока с `OK`. На эмуляторе в Google Maps синяя точка должна прыгнуть на координаты, заданные в скрипте.
+
+## Без Android Studio (headless)
+
+```bash
+./setup_headless.sh install   # один раз: SDK, системный образ, AVD с барометром
+./setup_headless.sh start     # эмулятор без окна
+adb install pacer.apk         # поставить приложение
+python gpx_player.py track.gpx
+```
+
+Нужны Java 17+, curl, unzip и аппаратная виртуализация (KVM). Скрипт не проверялся на всех ОС — при проблемах смотри `~/android-sdk/emulator.log`. Так же его можно запустить на сервере или в CI.
+
+## Проверка трека без эмулятора
+
+```bash
+python gpx_player.py track.gpx --dry-run
+```
+
+Покажет число точек, перепад высот, длительность, дистанцию и среднюю скорость. Если в GPX нет `<time>`, время считается из длины пути и `--walk-kmh` (по умолчанию 4.5).
 
 ## Создание GPX-маршрута
 
@@ -158,7 +174,7 @@ P = 1013.25 · (1 − 0.0065·h / 288.15) ^ 5.255
 
 ## Параметры скрипта
 
-В начале `gpx_player.py`:
+Все параметры задаются флагами: `--host --port --token --speed --cadence --step --walk-kmh --dry-run` (`python gpx_player.py -h`). Значения по умолчанию — константы в начале `gpx_player.py`:
 
 ```python
 EMULATOR_HOST = "localhost"
