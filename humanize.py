@@ -69,6 +69,19 @@ def _position(pts, cum, s):
     return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f)
 
 
+def densify(pts, max_gap_m=5.0):
+    """Вставляет точки, чтобы расстояние между соседними было <= max_gap_m."""
+    out = [pts[0]]
+    for p, q in zip(pts, pts[1:]):
+        n = int(_dist_m(p[0], p[1], q[0], q[1]) // max_gap_m)
+        for k in range(1, n + 1):
+            f = k / (n + 1)
+            out.append((p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f,
+                        p[2] + (q[2] - p[2]) * f))
+        out.append(q)
+    return out
+
+
 def humanize(raw_points, seed=None, mean_kmh=4.5, speed_var=0.15, gps_noise_m=2.5,
              stop_prob=0.5, stop_range=(5.0, 40.0), random_stop_per_km=0.7,
              turn_deg=35.0, step=1.0):
@@ -78,6 +91,7 @@ def humanize(raw_points, seed=None, mean_kmh=4.5, speed_var=0.15, gps_noise_m=2.
     pts = [(p[0], p[1], p[2]) for p in raw_points]
     if len(pts) < 2:
         return [(pts[0][0], pts[0][1], pts[0][2], 0.0)] if pts else [], []
+    pts = densify(pts)
     rng = random.Random(seed)
     cum = _cumulative(pts)
     total = cum[-1]

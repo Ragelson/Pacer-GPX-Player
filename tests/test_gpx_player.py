@@ -100,6 +100,12 @@ class HumanizeTests(unittest.TestCase):
         self.assertLess(end, 15)
         self.assertGreater(len(pts), 100)
 
+    def test_sparse_route_still_finds_turn(self):
+        sparse = [(54.7757, 56.0366, 100.0, None), (54.7784, 56.0366, 100.0, None),
+                  (54.7784, 56.0420, 100.0, None)]
+        _, stops = g.humanize(sparse, seed=1, stop_prob=1.0, random_stop_per_km=0)
+        self.assertEqual(len(stops), 1)
+
     def test_no_noise_stays_on_route(self):
         route = self.l_route()
         pts, _ = g.humanize(route, seed=5, gps_noise_m=0.0)
