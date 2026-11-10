@@ -32,6 +32,20 @@ pre{margin:0;max-height:260px;overflow:auto;font:12px/1.4 ui-monospace,monospace
 .err{color:var(--bad);min-height:1.2em;margin-top:6px}
 .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px 12px;margin-top:8px}
 .kv b{display:block;font-size:16px}
+.tabs{display:flex;gap:4px;margin:0 0 12px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;padding:10px 14px;color:var(--muted);white-space:nowrap}
+.tab.active{color:var(--fg);border-bottom-color:var(--acc);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+tr.click{cursor:pointer}tr.click:hover{background:var(--bg)}
+.tablewrap{overflow-x:auto}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;border:1px solid var(--line)}
+.badge.ok{color:var(--ok);border-color:var(--ok)}.badge.bad{color:var(--bad);border-color:var(--bad)}
+.hide{display:none!important}
+canvas.small{height:90px}
+.note{font-size:13px;color:var(--muted);margin-top:6px}
+.checks div{padding:2px 0}
 </style>
 </head>
 <body>
@@ -46,6 +60,12 @@ pre{margin:0;max-height:260px;overflow:auto;font:12px/1.4 ui-monospace,monospace
 </div>
 
 <div id="app" hidden>
+<div class="tabs" role="tablist">
+  <button class="tab active" data-tab="play">Проигрыш</button>
+  <button class="tab" data-tab="route">Создание маршрута</button>
+  <button class="tab" data-tab="reports">Отчёты</button>
+</div>
+<section id="tab-play">
 <div class="card">
   <h2>Эмулятор</h2>
   <div class="row">
@@ -98,6 +118,75 @@ pre{margin:0;max-height:260px;overflow:auto;font:12px/1.4 ui-monospace,monospace
   <div class="bar"><div id="barfill"></div></div>
   <pre id="log"></pre>
 </div>
+</section>
+
+<section id="tab-route" class="hide">
+<div class="card">
+  <h2>GraphHopper</h2>
+  <div class="row"><span><span class="dot" id="ghDot"></span><span id="ghText">…</span></span>
+  <span class="muted" id="ghUrl"></span></div>
+  <div class="note" id="ghHint" hidden>Не запущен. На сервере: <code>sudo ./deploy/graphhopper.sh</code> (см. README). Без него работает режим «синтетика» для набора.</div>
+</div>
+
+<div class="card">
+  <h2>Один маршрут</h2>
+  <div class="grid">
+    <div><label>Режим</label><select id="rMode"><option value="loop">Кольцо от точки</option><option value="points">Из точки A в B</option></select></div>
+    <div><label>Широта (A)</label><input type="number" step="0.0001" id="rLat" value="54.7757"></div>
+    <div><label>Долгота (A)</label><input type="number" step="0.0001" id="rLon" value="56.0366"></div>
+    <div class="m-loop"><label>Длина, км</label><input type="number" step="0.1" id="rLen" value="4"></div>
+    <div class="m-loop"><label>Seed</label><input type="number" id="rSeed" value="1"></div>
+    <div class="m-points hide"><label>Широта (B)</label><input type="number" step="0.0001" id="rLat2"></div>
+    <div class="m-points hide"><label>Долгота (B)</label><input type="number" step="0.0001" id="rLon2"></div>
+    <div class="m-loop"><label>&nbsp;</label><label style="color:var(--fg);font-size:15px"><input type="checkbox" id="rExact"> Точно по длине</label></div>
+  </div>
+  <div class="row" style="margin-top:12px"><button class="primary" id="rBuild">Построить</button></div>
+  <div class="err" id="rErr"></div>
+  <div class="note">«Точно по длине» обрезает маршрут до заданной длины: кольцо при этом может не замкнуться. Без этой галочки GraphHopper возвращает длину приближённо.</div>
+</div>
+
+<div class="card" id="rResult" hidden>
+  <h2>Результат</h2>
+  <canvas id="rMap" width="800" height="260"></canvas>
+  <canvas id="rEle" class="small" width="800" height="90" style="margin-top:8px"></canvas>
+  <div class="kv" id="rSummary"></div>
+  <div class="row" style="margin-top:12px">
+    <input type="text" id="rName" placeholder="Имя файла, например ufa_loop_4km" style="flex:1;min-width:200px">
+    <button id="rSave">Сохранить как GPX</button>
+  </div>
+  <div class="note" id="rSaved"></div>
+</div>
+
+<div class="card">
+  <h2>Набор для челленджа</h2>
+  <div class="grid">
+    <div><label>Дистанция, км</label><input type="number" step="1" id="cKm" value="100"></div>
+    <div><label>Число маршрутов (пусто = авто)</label><input type="number" id="cN"></div>
+    <div><label>Seed</label><input type="number" id="cSeed" value="1"></div>
+    <div><label>Геометрия</label><select id="cSrc"><option value="graphhopper">GraphHopper</option><option value="synthetic">Синтетика</option></select></div>
+    <div><label>Старт: широта</label><input type="number" step="0.0001" id="cLat" value="54.7757"></div>
+    <div><label>Старт: долгота</label><input type="number" step="0.0001" id="cLon" value="56.0366"></div>
+    <div><label>Бюджет, мин</label><input type="number" step="1" id="cBudget" value="20"></div>
+    <div><label>Пейсинг (0 = макс.)</label><input type="number" id="cAccel" value="0"></div>
+    <div><label>Показ. дистанция, доля</label><input type="number" step="0.05" id="cFactor" value="1"></div>
+    <div><label>Официальный адаптер</label><select id="cOff"><option value="">нет</option><option value="health_connect">Health Connect</option><option value="apple_health">Apple Health</option></select></div>
+  </div>
+  <div class="row" style="margin-top:12px"><button class="primary" id="cStart">Сгенерировать и прогнать</button></div>
+  <div class="bar"><div id="cBar"></div></div>
+  <div id="cStatus" class="muted"></div>
+  <div class="err" id="cErr"></div>
+  <div class="note">Данные симулированные (<code>simulated: true</code>), временные метки виртуальные. Часы устройства не затрагиваются. Результат — в «Отчётах».</div>
+</div>
+</section>
+
+<section id="tab-reports" class="hide">
+<div class="card">
+  <div class="row" style="justify-content:space-between"><h2 style="margin:0">Отчёты</h2><button id="repRefresh">Обновить</button></div>
+  <div class="tablewrap" style="margin-top:8px"><table id="repTable"><thead><tr><th>Время</th><th>Тип</th><th>Название</th><th>Статус</th><th>Итог</th></tr></thead><tbody></tbody></table></div>
+  <div class="muted" id="repEmpty" hidden>Пока пусто. Отчёты появляются после проигрыша или прогона челленджа.</div>
+</div>
+<div class="card" id="repDetail" hidden></div>
+</section>
 </div>
 </main>
 
@@ -131,6 +220,7 @@ async function loadTracks(sel){
 async function enter(){
   $('loginCard').hidden = true; $('app').hidden = false;
   await loadTracks(); poll(); timer = setInterval(poll, 1000);
+  try { setTab(localStorage.getItem('pacerTab') || 'play'); } catch(e){}
 }
 $('login').onclick = async () => {
   TOKEN = $('token').value.trim();
@@ -178,8 +268,8 @@ $('start').onclick = async () => {
 };
 $('stop').onclick = () => api('POST','/api/stop',{}).catch(e => $('runErr').textContent = e.message);
 
-function draw(){
-  const c = $('map'), ctx = c.getContext('2d'), W = c.width, H = c.height;
+function drawRoute(id, route, here){
+  const c = $(id), ctx = c.getContext('2d'), W = c.width, H = c.height;
   ctx.clearRect(0,0,W,H); if (route.length < 2) return;
   const lats = route.map(p=>p[0]), lons = route.map(p=>p[1]);
   const la0=Math.min(...lats), la1=Math.max(...lats), lo0=Math.min(...lons), lo1=Math.max(...lons);
@@ -192,6 +282,16 @@ function draw(){
   ctx.fillStyle = css.getPropertyValue('--ok'); ctx.beginPath(); ctx.arc(X(route[0][1]),Y(route[0][0]),5,0,7); ctx.fill();
   ctx.fillStyle = css.getPropertyValue('--bad'); const e = route[route.length-1]; ctx.beginPath(); ctx.arc(X(e[1]),Y(e[0]),5,0,7); ctx.fill();
   if (here){ ctx.fillStyle = css.getPropertyValue('--fg'); ctx.beginPath(); ctx.arc(X(here[1]),Y(here[0]),6,0,7); ctx.fill(); }
+}
+function draw(){ drawRoute('map', route, here); }
+function drawElevation(id, ele){
+  const c = $(id), ctx = c.getContext('2d'), W = c.width, H = c.height; ctx.clearRect(0,0,W,H);
+  const v = ele.filter(x => x != null); if (v.length < 2) return;
+  const lo = Math.min(...v), hi = Math.max(...v), r = Math.max(hi-lo, 1), css = getComputedStyle(document.documentElement);
+  ctx.strokeStyle = css.getPropertyValue('--muted'); ctx.lineWidth = 2; ctx.beginPath();
+  v.forEach((e,i)=>{ const x = 6 + i/(v.length-1)*(W-12), y = H-8-(e-lo)/r*(H-16); i ? ctx.lineTo(x,y) : ctx.moveTo(x,y); }); ctx.stroke();
+  ctx.fillStyle = css.getPropertyValue('--muted'); ctx.font = '20px sans-serif';
+  ctx.fillText(hi.toFixed(0)+' м', 8, 22); ctx.fillText(lo.toFixed(0)+' м', 8, H-12);
 }
 const NAMES = {idle:'Ожидание', running:'Идёт проигрыш', done:'Готово', stopped:'Остановлено', error:'Ошибка'};
 async function poll(){
@@ -211,7 +311,151 @@ async function poll(){
       l.textContent += (l.textContent ? '\n' : '') + j.log.join('\n'); logFrom = j.log_total; if (atEnd) l.scrollTop = l.scrollHeight; }
   } catch(e){}
 }
-if (TOKEN) api('GET','/api/tracks').then(enter).catch(()=>showLogin());
+
+// ---------- вкладки ----------
+function setTab(name){
+  for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === name);
+  for (const t of ['play','route','reports']) $('tab-'+t).classList.toggle('hide', t !== name);
+  try { localStorage.setItem('pacerTab', name); } catch(e){}
+  if (name === 'route') ghStatus();
+  if (name === 'reports') loadReports();
+  if (name === 'play') draw();
+}
+for (const b of document.querySelectorAll('.tab')) b.onclick = () => setTab(b.dataset.tab);
+
+// ---------- создание маршрута ----------
+const num = id => $(id).value === '' ? null : Number($(id).value);
+async function ghStatus(){
+  try { const j = await api('GET','/api/gh/status');
+    $('ghDot').className = 'dot' + (j.up ? ' on' : ''); $('ghText').textContent = j.up ? 'работает' : 'недоступен';
+    $('ghUrl').textContent = j.url + ' · профиль ' + j.profile; $('ghHint').hidden = j.up; } catch(e){}
+}
+function modeUi(){ const loop = $('rMode').value === 'loop';
+  for (const e of document.querySelectorAll('.m-loop')) e.classList.toggle('hide', !loop);
+  for (const e of document.querySelectorAll('.m-points')) e.classList.toggle('hide', loop); }
+$('rMode').onchange = modeUi;
+let builtId = null;
+$('rBuild').onclick = async () => {
+  $('rErr').textContent = ''; $('rSaved').textContent = ''; $('rBuild').disabled = true;
+  try {
+    const body = {mode:$('rMode').value, lat:num('rLat'), lon:num('rLon'), length_km:num('rLen'), seed:num('rSeed'),
+      exact:$('rExact').checked, end_lat:num('rLat2'), end_lon:num('rLon2')};
+    const j = await api('POST','/api/route/build', body); builtId = j.id;
+    $('rResult').hidden = false; drawRoute('rMap', j.route); $('rEle').classList.toggle('hide', !j.summary.has_elevation); if (j.summary.has_elevation) drawElevation('rEle', j.route.map(p=>p[2]));
+    const sm = j.summary, items = [['Длина', (sm.distance_m/1000).toFixed(3)+' км'], ['Точек', sm.points],
+      ['Старт ↔ финиш', Math.round(sm.start_end_gap_m)+' м']];
+    if (sm.has_elevation) items.push(['Набор / спуск', Math.round(sm.ascent_m)+' / '+Math.round(sm.descent_m)+' м'], ['Высоты', sm.ele_min.toFixed(0)+'…'+sm.ele_max.toFixed(0)+' м']);
+    else items.push(['Высоты', 'нет данных (провайдер высот GraphHopper выключен)']);
+    $('rSummary').innerHTML = '';
+    for (const [k,v] of items){ const d=document.createElement('div'), a=document.createElement('span'), b=document.createElement('b');
+      a.className='muted'; a.textContent=k; b.textContent=v; d.append(a,b); $('rSummary').append(d); }
+    if (!$('rName').value) $('rName').value = ($('rMode').value==='loop' ? 'loop_' + (sm.distance_m/1000).toFixed(1) + 'km_s' + $('rSeed').value : 'route_a_b');
+  } catch(e){ $('rErr').textContent = e.message; }
+  $('rBuild').disabled = false;
+};
+$('rSave').onclick = async () => {
+  $('rErr').textContent = ''; $('rSaved').textContent = '';
+  try { const j = await api('POST','/api/route/save',{id:builtId, name:$('rName').value});
+    $('rSaved').textContent = 'Сохранено: ' + j.name + '. Теперь он доступен на вкладке «Проигрыш».'; await loadTracks(j.name); }
+  catch(e){ $('rErr').textContent = e.message; }
+};
+
+// ---------- челлендж ----------
+let chalTimer = null;
+$('cStart').onclick = async () => {
+  $('cErr').textContent = '';
+  try {
+    await api('POST','/api/challenge/start',{total_km:num('cKm'), n:num('cN'), seed:num('cSeed'), source:$('cSrc').value,
+      lat:num('cLat'), lon:num('cLon'), budget_min:num('cBudget'), accel:num('cAccel'), distance_factor:num('cFactor'), official:$('cOff').value});
+    pollChallenge(); clearInterval(chalTimer); chalTimer = setInterval(pollChallenge, 700);
+  } catch(e){ $('cErr').textContent = e.message; }
+};
+async function pollChallenge(){
+  try {
+    const j = await api('GET','/api/challenge/status'), run = j.state === 'running';
+    $('cStart').disabled = run;
+    $('cBar').style.width = j.n ? (100*j.i/j.n)+'%' : (j.state==='done' ? '100%' : '0');
+    $('cStatus').textContent = run ? `Генерация: ${j.i||0} / ${j.n||'…'}` : (j.state==='done' ? 'Готово. ' : '');
+    if (j.state === 'done'){ clearInterval(chalTimer); const a = document.createElement('a'); a.href='#'; a.textContent = j.ok ? 'Открыть отчёт (все проверки пройдены)' : 'Открыть отчёт (есть непройденные проверки)';
+      a.onclick = e => { e.preventDefault(); setTab('reports'); openReport(j.report_id); }; $('cStatus').append(a); }
+    if (j.state === 'error'){ clearInterval(chalTimer); $('cErr').textContent = j.error || 'Ошибка'; }
+  } catch(e){}
+}
+
+// ---------- отчёты ----------
+const TYPES = {challenge:'Челлендж', playback:'Проигрыш'};
+const STATUS = {running:['идёт',''], done:['готово','ok'], checks_failed:['проверки не пройдены','bad'], error:['ошибка','bad'], stopped:['остановлен','']};
+function badge(st){ const [t,c] = STATUS[st] || [st,'']; const b = document.createElement('span'); b.className='badge '+c; b.textContent=t; return b; }
+function cell(tr, content){ const td = document.createElement('td'); if (content instanceof Node) td.append(content); else td.textContent = content; tr.append(td); }
+function fmtDate(iso){ try { return new Date(iso).toLocaleString('ru-RU'); } catch(e){ return iso; } }
+function repSummaryText(m){ const sm = m.summary || {};
+  if (m.type === 'challenge' && sm.walks) return `${sm.walks} пр. · ${sm.distance_km} км · ${sm.passed}/${sm.total} проверок · ${sm.wall_s} с`;
+  if (m.type === 'playback' && sm.points_total) return `${sm.points_played}/${sm.points_total} точек · ${sm.wall_s} с`;
+  return m.error || ''; }
+async function loadReports(){
+  try {
+    const j = await api('GET','/api/reports'), tb = $('repTable').tBodies[0]; tb.innerHTML = '';
+    $('repEmpty').hidden = j.reports.length > 0;
+    for (const m of j.reports){ const tr = document.createElement('tr'); tr.className = 'click';
+      cell(tr, fmtDate(m.created)); cell(tr, TYPES[m.type] || m.type); cell(tr, m.title || ''); cell(tr, badge(m.status)); cell(tr, repSummaryText(m));
+      tr.onclick = () => openReport(m.id); tb.append(tr); }
+  } catch(e){}
+}
+$('repRefresh').onclick = loadReports;
+function kvBlock(items){ const wrap = document.createElement('div'); wrap.className = 'kv';
+  for (const [k,v] of items){ const d=document.createElement('div'), a=document.createElement('span'), b=document.createElement('b');
+    a.className='muted'; a.textContent=k; b.textContent=v; d.append(a,b); wrap.append(d); } return wrap; }
+function h(tag, text, cls){ const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+async function downloadZip(id){
+  const r = await fetch('/api/reports/'+encodeURIComponent(id)+'/zip', {headers:{'X-Token':TOKEN}});
+  if (!r.ok) { alert('Не удалось скачать'); return; }
+  const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a'); a.href = url; a.download = id+'.zip'; a.click(); URL.revokeObjectURL(url);
+}
+async function openReport(id){
+  let j; try { j = await api('GET','/api/reports/'+encodeURIComponent(id)); } catch(e){ return; }
+  const d = $('repDetail'), m = j.meta; d.hidden = false; d.innerHTML = '';
+  const head = h('div'); head.className = 'row'; head.style.justifyContent = 'space-between';
+  const title = h('div'); title.append(h('b', m.title || m.id), document.createTextNode(' '), badge(m.status));
+  const btns = h('div'); btns.className = 'row';
+  const z = h('button', 'Скачать ZIP'); z.onclick = () => downloadZip(m.id);
+  const del = h('button', 'Удалить', 'danger'); del.onclick = async () => { if (!confirm('Удалить отчёт?')) return; await api('DELETE','/api/reports/'+encodeURIComponent(m.id)); d.hidden = true; loadReports(); };
+  btns.append(z, del); head.append(title, btns); d.append(head, h('div', m.id + ' · ' + fmtDate(m.created), 'muted'));
+  if (m.error) d.append(h('div', m.error, 'err'));
+  const fc = j.final_check;
+  if (fc){
+    d.append(h('h2', 'Контрольные проверки: ' + fc.passed + ' / ' + fc.total)); d.querySelector('h2').style.marginTop = '14px';
+    const ch = h('div', null, 'checks');
+    for (const [k,c] of Object.entries(fc.checks)) ch.append(h('div', (c.ok ? '✅ ' : '❌ ') + k + (c.detail ? ' — ' + c.detail : '')));
+    d.append(ch);
+    d.append(kvBlock([['Реальное время', fc.wall_s + ' с'], ['Виртуальное время', (fc.virtual_s/3600).toFixed(2) + ' ч'],
+      ['Ускорение', fc.wall_s ? '×' + Math.round(fc.virtual_s/fc.wall_s) : '—'], ['Геометрия', (m.summary||{}).geometry_source || '—']]));
+    if (j.index){
+      const ver = {}; for (const v of fc.verified || []) ver[v.id] = v;
+      d.append(h('h2', 'Прогулки (' + j.index.count + ')')); d.lastChild.style.marginTop = '14px';
+      const wrap = h('div', null, 'tablewrap'), t = document.createElement('table'), hr = t.createTHead().insertRow();
+      for (const c of ['ID','км','км/ч','Виртуальный старт','Длит., мин','simulated','Импорт','Расхождение, м']) hr.append(h('th', c));
+      const tb = t.createTBody();
+      for (const w of j.index.walks){ const tr = tb.insertRow(), v = ver[w.id] || {};
+        cell(tr, w.id); cell(tr, (w.distance_m/1000).toFixed(3)); cell(tr, w.avg_kmh.toFixed(2)); cell(tr, w.virtual_start.replace('T',' ').replace('Z','').split('.')[0]);
+        cell(tr, (w.duration_s/60).toFixed(1)); cell(tr, w.simulated ? 'да' : 'НЕТ'); cell(tr, v.error ? v.error : 'ок'); cell(tr, v.discrepancy_m != null ? v.discrepancy_m : '—'); }
+      wrap.append(t); d.append(wrap);
+    }
+    if ((fc.official_adapters||[]).length){
+      d.append(h('h2', 'Официальные адаптеры')); d.lastChild.style.marginTop = '14px';
+      for (const o of fc.official_adapters){ d.append(h('div', o.adapter + ': connect=' + o.connect)); d.append(h('div', o.result || '', 'note')); }
+    }
+  }
+  if (m.type === 'playback'){
+    const sm = m.summary || {};
+    d.append(kvBlock([['Файл', sm.file || '—'], ['Точек', (sm.points_played||0) + ' / ' + (sm.points_total||0)], ['Время', (sm.wall_s||0) + ' с'],
+      ['Humanize', sm.params && sm.params.human ? 'да' : 'нет'], ['Множитель', sm.params ? sm.params.speed : '—']]));
+    if (j.log) { d.append(h('h2', 'Лог')); d.lastChild.style.marginTop = '14px'; d.append(h('pre', j.log)); }
+  }
+  d.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+modeUi();
+if (TOKEN) api('GET','/api/tracks').then(async()=>{ await enter(); try { setTab(localStorage.getItem('pacerTab') || 'play'); } catch(e){} }).catch(()=>showLogin());
 </script>
 </body>
 </html>

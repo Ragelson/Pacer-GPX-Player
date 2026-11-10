@@ -1,0 +1,16 @@
+[Unit]
+Description=GraphHopper routing (foot)
+After=network.target
+
+[Service]
+User=pacer
+WorkingDirectory=/opt/graphhopper
+ExecStart=/usr/bin/java -Xmx@XMX@ -jar /opt/graphhopper/graphhopper-web-@VER@.jar server /opt/graphhopper/config.yml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

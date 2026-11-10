@@ -11,6 +11,7 @@
 """
 import argparse
 import collections
+import re as _re
 import hmac
 import json
 import os
@@ -25,6 +26,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import gpx_player as gp
+import routing
+from challenge.runner import run_challenge
+from reports import ReportStore
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("PACER_DATA_DIR", Path.home() / ".pacer-gpx"))
@@ -46,8 +50,13 @@ PARAMS = {
 
 
 class State:
-    def __init__(self, emu_host, emu_port):
+    def __init__(self, emu_host, emu_port, gh_url=None, reports_dir=None):
         self.emu_host, self.emu_port = emu_host, emu_port
+        self.router = routing.GraphHopperClient(gh_url)
+        self.reports = ReportStore(reports_dir or (DATA_DIR / "reports"))
+        self.built = collections.OrderedDict()          # id -> координаты построенного маршрута
+        self.challenge = {"state": "idle"}
+        self.challenge_job = None
         self.lock = threading.Lock()
         self.log = collections.deque(maxlen=500)
         self.job = None
@@ -94,13 +103,51 @@ def clean_params(raw):
     return out
 
 
+def _num(raw, key, typ, lo, hi, default=None, required=False):
+    val = raw.get(key, default)
+    if val in (None, ""):
+        if required:
+            raise ValueError(f"Поле {key} обязательно")
+        return default
+    try:
+        val = typ(val)
+    except (TypeError, ValueError):
+        raise ValueError(f"Поле {key}: неверное значение")
+    if not lo <= val <= hi:
+        raise ValueError(f"Поле {key}: допустимо {lo}…{hi}")
+    return val
+
+
+def clean_challenge(raw):
+    src = raw.get("source", "graphhopper")
+    if src not in ("graphhopper", "synthetic"):
+        raise ValueError("source: graphhopper|synthetic")
+    off = raw.get("official") or None
+    if off not in (None, "health_connect", "apple_health"):
+        raise ValueError("official: health_connect|apple_health")
+    return {
+        "seed": _num(raw, "seed", int, 0, 2**31 - 1, 1),
+        "n": _num(raw, "n", int, 1, 200),
+        "total_km": _num(raw, "total_km", float, 1.0, 500.0, 100.0),
+        "source": src,
+        "accel": _num(raw, "accel", float, 0.0, 1e6, 0.0),
+        "budget_min": _num(raw, "budget_min", float, 0.1, 120.0, 20.0),
+        "distance_factor": _num(raw, "distance_factor", float, 0.1, 1.5, 1.0),
+        "official": off,
+        "lat": _num(raw, "lat", float, -90, 90, 54.7757),
+        "lon": _num(raw, "lon", float, -180, 180, 56.0366),
+    }
+
+
 def track_path(name):
     if not isinstance(name, str) or not NAME_RE.match(name):
         raise ValueError("Недопустимое имя файла")
     return TRACKS_DIR / name
 
 
-def run_job(state, path, params):
+def run_job(state, path, params, rid=None):
+    t_start = time.time()
+
     def on_progress(i, n, lat, lon, ele, t_off):
         state.set_status(i=i, n=n, lat=lat, lon=lon, ele=ele, t=t_off)
 
@@ -119,6 +166,49 @@ def run_job(state, path, params):
         state.add_log(f"[!] Ошибка: {e}")
         final = "error"
     state.set_status(state=final)
+    if rid:
+        st, logs, _ = state.snapshot()
+        try:
+            (state.reports.root / rid / "log.txt").write_text("\n".join(logs), encoding="utf-8")
+            state.reports.update(rid, status=final, summary={
+                "file": path.name, "params": {k: v for k, v in params.items()},
+                "points_played": st.get("i", 0), "points_total": st.get("n", 0),
+                "wall_s": round(time.time() - t_start, 1)})
+        except Exception:
+            pass
+
+
+def run_challenge_job(state, rid, rdir, prm):
+    def log(line):
+        with state.lock:
+            state.challenge.setdefault("log", []).append(line)
+
+    def progress(i, n):
+        with state.lock:
+            state.challenge.update(i=i, n=n, stage="generate")
+
+    try:
+        router = state.router if prm["source"] == "graphhopper" else None
+        if router is not None and not router.health():
+            raise routing.RouterError(
+                f"GraphHopper недоступен ({router.url}). Запусти его или выбери «синтетика».")
+        summary, rep, walks = run_challenge(
+            rdir, prm["seed"], prm["n"], prm["total_km"] * 1000, prm["accel"] or None,
+            prm["budget_min"] * 60, prm["distance_factor"], prm["official"], router,
+            (prm["lat"], prm["lon"]), log=log, progress=progress)
+        ok = summary["passed"] == summary["total"]
+        status = "done" if ok else "checks_failed"
+        state.reports.update(rid, status=status, summary={
+            "walks": len(walks), "distance_km": round(sum(w.distance_m for w in walks) / 1000, 4),
+            "passed": summary["passed"], "total": summary["total"],
+            "wall_s": round(rep["wall_s"], 2), "virtual_h": round(rep["virtual_s"] / 3600, 2),
+            "geometry_source": summary["geometry_source"], "params": prm})
+        with state.lock:
+            state.challenge.update(state="done", stage="done", report_id=rid, ok=ok)
+    except Exception as e:
+        state.reports.update(rid, status="error", error=str(e), summary={"params": prm})
+        with state.lock:
+            state.challenge.update(state="error", stage="error", report_id=rid, error=str(e))
 
 
 def thin(points, limit=400):
@@ -157,13 +247,15 @@ def make_handler(state, web_token):
         def log_message(self, fmt, *args):
             pass
 
-        def _send(self, code, body, ctype="application/json"):
+        def _send(self, code, body, ctype="application/json", headers=None):
             if not isinstance(body, bytes):
                 body = json.dumps(body, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype + ("; charset=utf-8" if "text" in ctype or "json" in ctype else ""))
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
             self.end_headers()
@@ -251,12 +343,60 @@ def make_handler(state, web_token):
                     state.log.clear()
                     state.status = {"state": "running", "file": p.name, "i": 0, "n": 0,
                                     "started": time.time()}
-                    state.job = threading.Thread(target=run_job, args=(state, p, prm), daemon=True)
+                    rid, _ = state.reports.new("playback", f"Проигрыш {p.name}")
+                    state.status["report_id"] = rid
+                    state.job = threading.Thread(target=run_job, args=(state, p, prm, rid), daemon=True)
                     state.job.start()
                 return self._send(200, {"ok": True})
             if method == "POST" and path == "/api/stop":
                 state.cancel.set()
                 return self._send(200, {"ok": True})
+            if method == "GET" and path == "/api/gh/status":
+                return self._send(200, {"up": state.router.health(), "url": state.router.url,
+                                        "profile": state.router.profile})
+            if method == "POST" and path == "/api/route/build":
+                return self._send(200, self._build_route(self._json()))
+            if method == "POST" and path == "/api/route/save":
+                body = self._json()
+                rid, name = body.get("id"), str(body.get("name", "")).strip()
+                if not name.endswith(".gpx"):
+                    name += ".gpx"
+                p = track_path(name)
+                coords = state.built.get(rid)
+                if coords is None:
+                    raise ValueError("Маршрут не найден: построй его заново")
+                if p.exists():
+                    raise ValueError(f"Файл {p.name} уже существует, выбери другое имя")
+                p.write_text(routing.route_to_gpx(coords, p.stem), encoding="utf-8")
+                return self._send(200, {"ok": True, "name": p.name})
+            if method == "POST" and path == "/api/challenge/start":
+                prm = clean_challenge(self._json())
+                with state.lock:
+                    if state.challenge_job and state.challenge_job.is_alive():
+                        raise ValueError("Прогон челленджа уже идёт")
+                    rid, rdir = state.reports.new("challenge", f"Челлендж {prm['total_km']:g} км, seed {prm['seed']}")
+                    state.challenge = {"state": "running", "stage": "generate", "i": 0, "n": 0,
+                                       "report_id": rid, "log": [], "started": time.time()}
+                    state.challenge_job = threading.Thread(
+                        target=run_challenge_job, args=(state, rid, rdir, prm), daemon=True)
+                    state.challenge_job.start()
+                return self._send(200, {"ok": True, "report_id": rid})
+            if method == "GET" and path == "/api/challenge/status":
+                with state.lock:
+                    return self._send(200, dict(state.challenge))
+            if method == "GET" and path == "/api/reports":
+                return self._send(200, {"reports": state.reports.list()})
+            if path.startswith("/api/reports/"):
+                parts = path.split("/")[3:]
+                rid = parts[0]
+                if method == "GET" and len(parts) == 1:
+                    return self._send(200, state.reports.get(rid))
+                if method == "GET" and len(parts) == 2 and parts[1] == "zip":
+                    return self._send(200, state.reports.zip_bytes(rid), "application/zip",
+                                      {"Content-Disposition": f'attachment; filename="{rid}.zip"'})
+                if method == "DELETE" and len(parts) == 1:
+                    state.reports.delete(rid)
+                    return self._send(200, {"ok": True})
             if method == "POST" and path == "/api/emulator":
                 action = self._json().get("action")
                 if action not in ("start", "stop"):
@@ -264,6 +404,42 @@ def make_handler(state, web_token):
                 emulator_action(state, action)
                 return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
+
+
+        def _build_route(self, body):
+            mode = body.get("mode", "loop")
+            lat = _num(body, "lat", float, -90, 90, required=True)
+            lon = _num(body, "lon", float, -180, 180, required=True)
+            if mode == "loop":
+                length_km = _num(body, "length_km", float, 0.3, 30.0, required=True)
+                seed = _num(body, "seed", int, 0, 2**31 - 1, 1)
+                if body.get("exact"):
+                    r = state.router.route_at_least(lat, lon, length_km * 1000, seed)
+                    coords = routing.trim_polyline(r["coords"], length_km * 1000)
+                else:
+                    r = state.router.round_trip(lat, lon, length_km * 1000, seed)
+                    coords = r["coords"]
+            elif mode == "points":
+                end_lat = _num(body, "end_lat", float, -90, 90, required=True)
+                end_lon = _num(body, "end_lon", float, -180, 180, required=True)
+                r = state.router.route([(lat, lon), (end_lat, end_lon)])
+                coords = r["coords"]
+            else:
+                raise ValueError("mode: loop|points")
+            rid = secrets.token_hex(6)
+            state.built[rid] = coords
+            while len(state.built) > 20:
+                state.built.popitem(last=False)
+            stats = routing.elevation_stats(coords)
+            k = max(1, len(coords) // 500)
+            thin_c = coords[::k] + ([coords[-1]] if (len(coords) - 1) % k else [])
+            gap = routing.haversine_m(coords[0][0], coords[0][1], coords[-1][0], coords[-1][1])
+            return {"id": rid,
+                    "route": [[round(c[0], 6), round(c[1], 6), None if c[2] is None else round(c[2], 1)]
+                              for c in thin_c],
+                    "summary": {"distance_m": routing.polyline_length(coords),
+                                "gh_distance_m": r["distance_m"], "gh_time_s": r["time_s"],
+                                "points": len(coords), "start_end_gap_m": gap, **stats}}
 
         def do_GET(self):
             self._route("GET")
@@ -299,13 +475,14 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--emu-host", default="localhost")
     ap.add_argument("--emu-port", type=int, default=5554)
+    ap.add_argument("--gh-url", default=None, help="адрес GraphHopper (по умолчанию GRAPHHOPPER_URL или http://127.0.0.1:8989)")
     a = ap.parse_args(argv)
     if a.bind in ("0.0.0.0", "::"):
         print("[!] ВНИМАНИЕ: --bind 0.0.0.0 открывает интерфейс на всех сетях. "
               "Используй адрес WireGuard-интерфейса.")
     TRACKS_DIR.mkdir(parents=True, exist_ok=True)
     token = load_web_token()
-    state = State(a.emu_host, a.emu_port)
+    state = State(a.emu_host, a.emu_port, a.gh_url)
     srv = ThreadingHTTPServer((a.bind, a.port), make_handler(state, token))
     print(f"[+] http://{a.bind}:{a.port}  (токен: {DATA_DIR / 'web_token'} или PACER_WEB_TOKEN)")
     try:

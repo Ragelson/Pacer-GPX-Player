@@ -1,12 +1,7 @@
 import argparse
-import os
 import sys
-from pathlib import Path
 
-from .adapters import MockPacerAdapter, OfficialHealthAdapter
-from .engine import Engine
-from .export import export_all, write_report
-from .generator import generate_set
+from .runner import run_challenge
 
 
 def main(argv=None):
@@ -23,26 +18,26 @@ def main(argv=None):
                    help="mock: какую долю дистанции «показывает» приёмник (демо расхождения)")
     p.add_argument("--official", choices=["health_connect", "apple_health"],
                    help="добавить в отчёт проверку официального адаптера (вернёт понятную ошибку)")
+    p.add_argument("--graphhopper", metavar="URL",
+                   help="брать геометрию с GraphHopper (напр. http://127.0.0.1:8989), иначе синтетика")
+    p.add_argument("--start", type=float, nargs=2, metavar=("LAT", "LON"), help="начальная точка")
     a = p.parse_args(argv)
 
-    out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-    log = out / "run_log.jsonl"
-    log.unlink(missing_ok=True)
-
-    import time
-    t0 = time.monotonic()
-    walks = generate_set(a.seed, a.n, a.total_km * 1000)
-    export_all(walks, out)
-    gen_s = time.monotonic() - t0
-    print(f"[+] Сгенерировано {len(walks)} прогулок, {sum(w.distance_m for w in walks)/1000:.4f} км "
-          f"за {gen_s:.2f} с -> {out}/")
-
-    eng = Engine(MockPacerAdapter(a.distance_factor), str(log), a.accel or None, a.budget_min * 60)
-    extra = [OfficialHealthAdapter(a.official)] if a.official else []
-    rep = eng.run(walks, extra)
-    rep["wall_s"] += gen_s                       # в бюджет входит и генерация
-    summary = write_report(rep, walks, out, a.seed)
+    router = None
+    if a.graphhopper:
+        import routing
+        router = routing.GraphHopperClient(a.graphhopper)
+        if not router.health():
+            print(f"[!] GraphHopper недоступен: {a.graphhopper}")
+            return 2
+    start = tuple(a.start) if a.start else None
+    try:
+        summary, rep, walks = run_challenge(a.out, a.seed, a.n, a.total_km * 1000, a.accel or None,
+                                            a.budget_min * 60, a.distance_factor, a.official,
+                                            router, start)
+    except Exception as e:
+        print(f"[!] {e}")
+        return 2
     for k, c in summary["checks"].items():
         print(f"  {'OK ' if c['ok'] else 'FAIL'} {k} {c['detail']}")
     print(f"[+] Проверок пройдено: {summary['passed']} / {summary['total']}; "

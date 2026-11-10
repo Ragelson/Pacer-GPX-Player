@@ -20,7 +20,9 @@ id "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --home-dir "$HO
 usermod -aG kvm "$APP_USER"          # аппаратное ускорение эмулятора
 
 install -d -o root -g root "$APP_DIR" "$APP_DIR/web"
-install -m 0644 "$SRC"/gpx_player.py "$SRC"/humanize.py "$SRC"/web_server.py "$APP_DIR/"
+install -m 0644 "$SRC"/gpx_player.py "$SRC"/humanize.py "$SRC"/web_server.py "$SRC"/routing.py "$SRC"/reports.py "$APP_DIR/"
+install -d "$APP_DIR/challenge"
+install -m 0644 "$SRC"/challenge/*.py "$APP_DIR/challenge/"
 install -m 0644 "$SRC"/web/index.html "$APP_DIR/web/"
 install -m 0755 "$SRC"/setup_headless.sh "$APP_DIR/"
 
@@ -38,5 +40,6 @@ sleep 1
 echo
 echo "[+] Готово: http://$BIND_IP:$PORT"
 echo "[+] Токен доступа: sudo cat $HOME_DIR/.pacer-gpx/web_token"
+echo "[+] GraphHopper (вкладка «Создание маршрута»): sudo ./deploy/graphhopper.sh"
 echo "[+] Закрой порт для всех, кроме wg-интерфейса, например:"
 echo "      ufw allow in on wg0 to any port $PORT proto tcp"

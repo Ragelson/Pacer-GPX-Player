@@ -24,6 +24,7 @@ class Walk:
     simulated: bool = True
     timestamps_kind: str = "virtual"
     source: str = "pacer-sim/0.1"
+    geometry_source: str = "synthetic"      # synthetic | graphhopper
 
     @property
     def distance_m(self):
@@ -53,7 +54,7 @@ class Walk:
         d = {
             "id": self.id, "index": self.index, "seed": self.seed,
             "simulated": self.simulated, "timestamps_kind": self.timestamps_kind,
-            "source": self.source, "sha256": self.sha256(),
+            "source": self.source, "geometry_source": self.geometry_source, "sha256": self.sha256(),
             "virtual_start": self.start.isoformat().replace("+00:00", "Z"),
             "virtual_end": self.end.isoformat().replace("+00:00", "Z"),
             "distance_m": round(self.distance_m, 3), "duration_s": round(self.duration_s, 1),

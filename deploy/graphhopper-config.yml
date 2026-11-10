@@ -1,0 +1,18 @@
+# Проверено на GraphHopper 11.0 (профиль foot, синтетическая карта OSM).
+graphhopper:
+  datareader.file: /opt/graphhopper/region.osm.pbf
+  graph.location: /var/lib/pacer/graph-cache
+  graph.encoded_values: foot_access, foot_average_speed, foot_priority, foot_road_access, hike_rating, country, road_class, mtb_rating
+  profiles:
+    - name: foot
+      custom_model_files: [foot.json]
+  import.osm.ignored_highways: motorway,trunk
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 127.0.0.1        # только localhost: наружу ходит веб-интерфейс Pacer, не клиенты
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 127.0.0.1
